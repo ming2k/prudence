@@ -1,0 +1,112 @@
+.TH PRUDENCE 1 "2026-04-13" "prudence 0.0.1" "User Commands"
+.SH NAME
+prudence \- move files to the XDG trash and restore them later
+.SH SYNOPSIS
+.B prudence
+[\-\-]
+.IR path ...
+.br
+.B prudence
+.B list
+.br
+.B prudence
+.B clear
+.br
+.B prudence
+.B restore
+.IR entry-id | entry-name ...
+.SH DESCRIPTION
+.B prudence
+moves files and directories into the freedesktop.org trash layout instead of deleting
+them permanently.
+It can also list existing trash entries and restore them to their recorded original paths.
+It can permanently clear the trash contents on demand.
+.PP
+For files on the same filesystem as the home data directory,
+.B prudence
+uses
+.IR $XDG_DATA_HOME/Trash
+or
+.IR $HOME/.local/share/Trash .
+For other mounted filesystems, it uses
+.IR $topdir/.Trash/$uid
+or
+.IR $topdir/.Trash\-$uid .
+.SH COMMANDS
+.TP
+.BI "prudence " path ...
+Move one or more files or directories into the trash.
+Use
+.B \-\-
+before a path that begins with
+.BR - .
+.TP
+.B prudence list
+Print the current trash entries in a readable multi-line format with a stable ID,
+trashed name, deletion time, and recorded original path.
+.TP
+.B prudence clear
+Permanently remove the current trash contents.
+.TP
+.BI "prudence restore " entry-id | entry-name ...
+Restore one or more entries from the trash.
+Entries may be selected by the stable ID from
+.B prudence list
+or by exact trashed name.
+If a name is ambiguous, an ID must be used instead.
+.SH SAFETY
+.TP
+.B No permanent delete during trashing
+Moving files into the trash does not permanently delete them.
+.TP
+.B Explicit clear
+Permanent deletion only happens when
+.B prudence clear
+is used.
+.TP
+.B Root protection
+It refuses to trash a filesystem root.
+.TP
+.B No overwrite on restore
+It refuses to restore over an existing path.
+.TP
+.B Cross-filesystem fallback
+If a direct rename is not possible, it copies into the trash first and removes the
+original only after the copy succeeds.
+.SH EXAMPLES
+.nf
+prudence notes.txt old-dir
+prudence -- -starts-with-dash
+prudence list
+prudence clear
+prudence restore notes.txt
+prudence restore home:notes.txt
+.fi
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/Trash
+Home trash location when
+.I XDG_DATA_HOME
+is set.
+.TP
+.I $HOME/.local/share/Trash
+Fallback home trash location.
+.TP
+.I $topdir/.Trash/$uid
+Mount-local trash when an administrator-created sticky
+.I .Trash
+directory exists.
+.TP
+.I $topdir/.Trash\-$uid
+Mount-local fallback trash directory.
+.SH INSTALLATION
+To make
+.B man prudence
+work system-wide, install the manual page into a standard manpath, for example:
+.PP
+.nf
+sudo install -d /usr/local/share/man/man1
+sudo install -m 644 man/man1/prudence.1 /usr/local/share/man/man1/prudence.1
+.fi
+.SH SEE ALSO
+.BR man (1)
