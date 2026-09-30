@@ -34,6 +34,7 @@ fn double_dash_allows_leading_dash_paths() {
     let output = Command::new(binary())
         .current_dir(&workdir)
         .env("XDG_DATA_HOME", &xdg_data_home)
+        .env("PRUDENCE_HOME_ONLY", "1")
         .args(["--", "-demo"])
         .output()
         .unwrap();
@@ -142,6 +143,7 @@ fn malformed_trashinfo_is_skipped_with_a_warning() {
 
     let output = Command::new(binary())
         .env("XDG_DATA_HOME", &xdg_data_home)
+        .env("PRUDENCE_HOME_ONLY", "1")
         .arg("list")
         .output()
         .unwrap();
@@ -156,10 +158,34 @@ fn malformed_trashinfo_is_skipped_with_a_warning() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn trash_directory_via_symlinked_parent_path() {
+    let (root, xdg_data_home) = setup_env("prudence-cli-symlinked-parent");
+    let real_parent = root.join("real-storage");
+    fs::create_dir_all(&real_parent).unwrap();
+    let link_parent = root.join("symlink-parent");
+    std::os::unix::fs::symlink(&real_parent, &link_parent).unwrap();
+
+    let target = link_parent.join("my-workspace");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("file.txt"), b"workspace content").unwrap();
+
+    let workdir = root.join("work");
+    fs::create_dir_all(&workdir).unwrap();
+
+    run_ok(&workdir, &xdg_data_home, &[target.to_str().unwrap()]);
+    assert!(!target.exists());
+    assert!(!real_parent.join("my-workspace").exists());
+    assert!(xdg_data_home.join("Trash/files/my-workspace/file.txt").exists());
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn run_ok(workdir: &Path, xdg_data_home: &Path, args: &[&str]) -> String {
     let output = Command::new(binary())
         .current_dir(workdir)
         .env("XDG_DATA_HOME", xdg_data_home)
+        .env("PRUDENCE_HOME_ONLY", "1")
         .args(args)
         .output()
         .unwrap();

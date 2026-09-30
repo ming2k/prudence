@@ -1,0 +1,53 @@
+#compdef prudence trash
+
+_prudence() {
+    local -a commands
+    commands=(
+        'list:List trashed files and directories'
+        'clear:Permanently empty the trash'
+        'clean:Alias for clear'
+        'empty:Alias for clear'
+        'restore:Restore entries from trash'
+    )
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Print help information]' \
+        '(-V --version)'{-V,--version}'[Print version information]' \
+        '--[Treat all remaining arguments as paths to trash]' \
+        '1: :->command_or_file' \
+        '*:: :->args'
+
+    case $state in
+        command_or_file)
+            _alternative \
+                'commands:commands:_describe "commands" commands' \
+                'files:files:_files'
+            ;;
+        args)
+            case $words[1] in
+                restore)
+                    local -a entries
+                    local line id name from
+                    while IFS= read -r line; do
+                        if [[ $line == \[*\] ]]; then
+                            id="${line#[}"
+                            id="${id%]}"
+                        elif [[ $line == "  name:    "* ]]; then
+                            name="${line#  name:    }"
+                        elif [[ $line == "  from:    "* ]]; then
+                            from="${line#  from:    }"
+                            [[ -n $name ]] && entries+=("${name}:from ${from}")
+                            [[ -n $id ]] && entries+=("${id}:from ${from}")
+                        fi
+                    done < <(prudence list 2>/dev/null)
+                    _describe 'trash entries' entries
+                    ;;
+                *)
+                    _files
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_prudence "$@"

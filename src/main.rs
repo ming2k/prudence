@@ -134,7 +134,7 @@ where
             }
             return Ok(Command::List);
         }
-        b"clear" => {
+        b"clear" | b"clean" | b"empty" => {
             if let Some(extra) = args.next() {
                 return Err(format!(
                     "unexpected argument '{}' for clear",
@@ -187,16 +187,24 @@ fn trash_path(input: &Path) -> Result<(), String> {
     if absolute_path.parent().is_none() {
         return Err(format!(
             "{}: refusing to trash a filesystem root",
-            absolute_path.display()
+            input.display()
         ));
     }
 
-    let plan = choose_trash_location(&absolute_path)?;
+    let physical = physical_path(&absolute_path)?;
+    let plan = choose_trash_location(&physical)?;
 
-    if absolute_path.starts_with(&plan.trash_root) {
+    if physical == plan.relative_base && physical.parent().is_some() {
+        return Err(format!(
+            "{}: refusing to trash a filesystem root or mount point",
+            input.display()
+        ));
+    }
+
+    if physical.starts_with(&plan.trash_root) {
         return Err(format!(
             "{}: refusing to trash an item that is already inside {}",
-            absolute_path.display(),
+            input.display(),
             plan.trash_root.display()
         ));
     }
@@ -205,8 +213,8 @@ fn trash_path(input: &Path) -> Result<(), String> {
 
     let original_name = absolute_path
         .file_name()
-        .ok_or_else(|| format!("{}: no final path component", absolute_path.display()))?;
-    let trash_info_path = encoded_trashinfo_path(&absolute_path, &plan)?;
+        .ok_or_else(|| format!("{}: no final path component", input.display()))?;
+    let trash_info_path = encoded_trashinfo_path(&physical, &plan)?;
     let deletion_date = deletion_timestamp()?;
     let info_contents = format!(
         "[Trash Info]\nPath={}\nDeletionDate={}\n",
@@ -234,10 +242,10 @@ fn trash_path(input: &Path) -> Result<(), String> {
             continue;
         }
 
-        if let Err(err) = move_path(&absolute_path, &file_path, &metadata) {
+        if let Err(err) = move_path(&physical, &file_path, &metadata) {
             let _ = fs::remove_file(&info_path);
             let _ = remove_path_if_exists(&file_path);
-            return Err(format!("{}: {err}", absolute_path.display()));
+            return Err(format!("{}: {err}", input.display()));
         }
 
         return Ok(());
@@ -245,7 +253,7 @@ fn trash_path(input: &Path) -> Result<(), String> {
 
     Err(format!(
         "{}: could not allocate a unique trash entry",
-        absolute_path.display()
+        input.display()
     ))
 }
 
@@ -332,6 +340,11 @@ fn restore_entries(selectors: &[OsString]) -> Result<(), String> {
 
     for entry in selected {
         restore_entry(&entry)?;
+        println!(
+            "restored {} -> {}",
+            entry.entry_name.to_string_lossy(),
+            entry.original_path.display()
+        );
     }
 
     Ok(())
@@ -498,6 +511,10 @@ fn discover_trash_roots() -> Result<Vec<PathBuf>, String> {
     let mut roots = BTreeSet::new();
     let xdg_data_home = xdg_data_home()?;
     roots.insert(xdg_data_home.join("Trash"));
+
+    if env::var_os("PRUDENCE_HOME_ONLY").is_some() {
+        return Ok(roots.into_iter().collect());
+    }
 
     let uid = uid_string();
     for mountpoint in mounted_topdirs()? {
@@ -710,11 +727,32 @@ fn xdg_data_home() -> Result<PathBuf, String> {
 }
 
 fn mount_root_for_path(path: &Path) -> Result<PathBuf, String> {
-    let start = existing_ancestor(path)
+    let physical = physical_path(path)?;
+    let start = existing_ancestor(&physical)
         .ok_or_else(|| format!("could not find an existing ancestor for {}", path.display()))?;
     let device = fs::symlink_metadata(&start)
         .map_err(|err| format!("failed to stat {}: {err}", start.display()))?
         .dev();
+
+    if let Ok(topdirs) = mounted_topdirs() {
+        let mut candidates: Vec<PathBuf> = topdirs
+            .into_iter()
+            .filter(|mountpoint| {
+                if !start.starts_with(mountpoint) {
+                    return false;
+                }
+                if let Ok(meta) = fs::symlink_metadata(mountpoint) {
+                    meta.dev() == device
+                } else {
+                    false
+                }
+            })
+            .collect();
+        candidates.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+        if let Some(best) = candidates.into_iter().next() {
+            return Ok(best);
+        }
+    }
 
     let mut current = start;
     loop {
@@ -733,11 +771,36 @@ fn mount_root_for_path(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
+fn physical_path(path: &Path) -> Result<PathBuf, String> {
+    let start = existing_ancestor(path)
+        .ok_or_else(|| format!("could not find an existing ancestor for {}", path.display()))?;
+
+    let canonical_parent = match start.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => fs::canonicalize(parent)
+            .map_err(|err| format!("failed to resolve parent of {}: {err}", path.display()))?,
+        _ => PathBuf::from("/"),
+    };
+
+    let physical_start = if let Some(file_name) = start.file_name() {
+        canonical_parent.join(file_name)
+    } else {
+        canonical_parent
+    };
+
+    if let Ok(suffix) = path.strip_prefix(&start) {
+        if !suffix.as_os_str().is_empty() {
+            return Ok(physical_start.join(suffix));
+        }
+    }
+
+    Ok(physical_start)
+}
+
 fn existing_ancestor(path: &Path) -> Option<PathBuf> {
     let mut current = path.to_path_buf();
 
     loop {
-        if current.exists() {
+        if current.exists() || current.is_symlink() {
             return Some(current);
         }
 
@@ -1228,6 +1291,16 @@ mod tests {
             Command::Clear => {}
             _ => panic!("expected clear command"),
         }
+        let clean_command = parse_args(vec![OsString::from("clean")]).unwrap();
+        match clean_command {
+            Command::Clear => {}
+            _ => panic!("expected clear command"),
+        }
+        let empty_command = parse_args(vec![OsString::from("empty")]).unwrap();
+        match empty_command {
+            Command::Clear => {}
+            _ => panic!("expected clear command"),
+        }
     }
 
     #[test]
@@ -1275,6 +1348,25 @@ mod tests {
 
         let _ = fs::remove_dir_all(&source_root);
         let _ = fs::remove_dir_all(&dest_root);
+    }
+
+    #[test]
+    fn physical_path_resolves_symlinked_parent_directory() {
+        let temp = std::env::temp_dir();
+        let base = unique_temp_dir(&temp, "prudence-test-symlink");
+        let real_dir = base.join("real");
+        fs::create_dir_all(&real_dir).unwrap();
+        let symlink_dir = base.join("link_to_real");
+        std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
+
+        let child = symlink_dir.join("workspace");
+        fs::create_dir_all(&child).unwrap();
+
+        let resolved = super::physical_path(&child).unwrap();
+        let expected = fs::canonicalize(&real_dir).unwrap().join("workspace");
+        assert_eq!(resolved, expected);
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     fn unique_temp_dir(base: &Path, prefix: &str) -> PathBuf {
