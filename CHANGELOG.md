@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.2 - 2026-09-30
+
+### Added
+
+- Shell completions for Bash, Zsh, and Fish under `completions/`
+- Makefile with build, test, check, install, user-install, and uninstall targets
+- `trash` alias symlink creation during make installation
+- `clean` and `empty` aliases for the `clear` command
+- Progress message when restoring entries
+- `PRUDENCE_HOME_ONLY` environment variable support for test and single-root environments
+
+### Fixed
+
+- Physical path resolution when trashing items through symlinked parent directories
+- Filesystem root and mount point detection improvements
+
 ## 0.0.1 - 2026-04-13
 
 Initial public release of `prudence`.

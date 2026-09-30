@@ -16,7 +16,7 @@ const EXDEV: i32 = 18;
 const EOPNOTSUPP: i32 = 95;
 const EPERM: i32 = 1;
 const HELP: &str = "\
-prudence 0.0.1
+prudence 0.0.2
 
 Move files and directories into the freedesktop/XDG trash instead of deleting them permanently.
 
